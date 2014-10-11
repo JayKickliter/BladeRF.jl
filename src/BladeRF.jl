@@ -1,8 +1,24 @@
 module BladeRF
 
+export  devices,
+        open,
+        close,
+        BladeRFDeviceInfo,
+        BladeRFDevice
+        
 const libbladerf = "libbladerf"
-
 typealias BladeRFStatus Cint
+
+
+
+macro bladerfcall( fname, argtypes, args... )
+    quote
+        ret = ccall( ($fname, libbladerf), BladeRFStatus, $argtypes, $(args...) )
+        ret >= 0 || error( "[$ret] "errorstring(ret) )
+        ret
+    end
+end
+
 
 immutable SerialNumber
     char1::Uint8
@@ -38,16 +54,14 @@ immutable SerialNumber
     char31::Uint8
     char32::Uint8
     char33::Uint8
-    function SerialNumber()
-        new()
-    end
+    SerialNumber() = new()
 end
 
 function Base.string( serial::SerialNumber )
     ascii( [serial.char1,serial.char2,serial.char3,serial.char4,serial.char5,serial.char6,serial.char7,serial.char8,serial.char9,serial.char10,serial.char11,serial.char12,serial.char13,serial.char14,serial.char15,serial.char16,serial.char17,serial.char18,serial.char19,serial.char20,serial.char21,serial.char22,serial.char23,serial.char24,serial.char25,serial.char26,serial.char27,serial.char28,serial.char29,serial.char30,serial.char31,serial.char32,serial.char33] )
 end
 
-immutable DeviceInfo
+immutable BladeRFDeviceInfo
     backend::Int32
     serial::SerialNumber
     usb_bus::Uint8
@@ -55,7 +69,17 @@ immutable DeviceInfo
     instance::Uint32
 end
 
-function Base.show( io::IO, devinfo::DeviceInfo )
+type BladeRFDevice
+    handle::Ptr{Void}
+    function BladeRFDevice( handle )
+        device = new( handle )
+        finalizer( device, close )
+        return device
+    end
+end
+
+
+function Base.show( io::IO, devinfo::BladeRFDeviceInfo )
     println( "Backend:      $(devinfo.backend)" )
     println( "Serial #:     $(string(devinfo.serial))" )
     println( "USB Bust:     $(int(devinfo.usb_bus))" )
@@ -64,25 +88,38 @@ function Base.show( io::IO, devinfo::DeviceInfo )
 end
 
 
-macro bladerfcall( fname, argtypes, args... )
-    quote
-        ret = ccall( ($fname, libbladerf), BladeRFStatus, $argtypes, $(args...) )
-        ret >= 0 || error( bladerf_strerror(ret) )
-        ret
-    end
-end
-
-
-function bladerf_strerror( status::Integer )
+function errorstring( status::Integer )
     p = ccall( ( :bladerf_strerror, libbladerf ), Ptr{Uint8}, (BladeRFStatus,), status )
     return bytestring( p )
 end
 
 
 function devices()
-    devlist     = Array(Ptr{DeviceInfo},1)
-    ndevices    = @bladerfcall( :bladerf_get_device_list, ( Ptr{DeviceInfo}, ), pointer(devlist) )
-    pointer_to_array( devlist[1], (ndevices,), true )
+    devlist  = Array(Ptr{BladeRFDeviceInfo},1)
+    ndevices = @bladerfcall( :bladerf_get_device_list, ( Ptr{BladeRFDeviceInfo}, ), pointer(devlist) )
+    return pointer_to_array( devlist[1], (ndevices,), true )
 end
+
+
+function Base.open( devinfo::BladeRFDeviceInfo )
+    handle = [C_NULL]
+    @bladerfcall( :bladerf_open_with_devinfo, ( Ptr{Ptr{Void}}, Ptr{BladeRFDeviceInfo} ), handle, [devinfo] )
+    return BladeRFDevice(handle[1])
+end
+
+function Base.open()
+    devinfo = devices()[1]
+    device  = open( devinfo )
+    return device
+end
+
+
+function Base.close( device::BladeRFDevice )
+    if device.handle != C_NULL
+        @bladerfcall( :bladerf_close, ( Ptr{Void}, ), device.handle )
+    end
+    device.handle = C_NULL
+end
+
 
 end # module
