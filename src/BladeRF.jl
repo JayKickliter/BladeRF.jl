@@ -4,13 +4,28 @@ export  devices,
         open,
         close,
         BladeRFDeviceInfo,
-        BladeRFDevice
+        BladeRFDevice,
+        TX,
+        RX,
+        enable,
+        disable,
+        config,
+        receive,
+        samplerate
+        
         
 const libbladerf = "libbladerf"
 typealias BladeRFStatus Cint
 
+immutable BladeRFModule
+    mod::Cint
+end
+
+const RX = BladeRFModule(0)
+const TX = BladeRFModule(1)
 
 
+# Thin wrapper around ccall to handle libbladerf's return/error codes
 macro bladerfcall( fname, argtypes, args... )
     quote
         ret = ccall( ($fname, libbladerf), BladeRFStatus, $argtypes, $(args...) )
@@ -119,6 +134,44 @@ function Base.close( device::BladeRFDevice )
         @bladerfcall( :bladerf_close, ( Ptr{Void}, ), device.handle )
     end
     device.handle = C_NULL
+end
+
+
+function enable( device::BladeRFDevice, rfmodule::BladeRFModule )
+    @bladerfcall( :bladerf_enable_module, (Ptr{Void}, Cint, Bool), device.handle, rfmodule.mod, true )
+    return nothing
+end
+
+function disable( device::BladeRFDevice, rfmodule::BladeRFModule )
+    @bladerfcall( :bladerf_enable_module, (Ptr{Void}, Cint, Bool), device.handle, rfmodule.mod, false )
+    return nothing
+end
+
+const BLADERF_FORMAT_SC16_Q11 = 0
+
+function config( device::BladeRFDevice, rfmodule::BladeRFModule; buffersize=1024, transfers=4, buffers=transfers+1, timeout=1000 )
+    @bladerfcall( :bladerf_sync_config, (Ptr{Void},Cint,Cint,Uint32,Uint32,Uint32,Uint32), device.handle, rfmodule.mod, BLADERF_FORMAT_SC16_Q11, buffers, buffersize, transfers, timeout )
+    return nothing
+end
+
+function receive( device::BladeRFDevice, samples::Integer; timeout = 1000 )
+    buffer = zeros( Complex{Int16}, samples )
+    @bladerfcall( :bladerf_sync_rx, (Ptr{Void},Ptr{Complex{Int16}},Uint,Ptr{Void},Uint), device.handle, buffer, samples, [C_NULL], timeout )
+    return buffer
+end
+
+# Get sample rate
+function samplerate( device::BladeRFDevice, rfmodule::BladeRFModule )
+    rate = Array(Cuint,1)
+    @bladerfcall( :bladerf_get_sample_rate, (Ptr{Void},Cint,Ptr{Cuint}), device.handle, rfmodule.mod, rate )
+    int(rate[1])
+end
+
+# Set sample rate
+function samplerate( device::BladeRFDevice, rfmodule::BladeRFModule, rate::Integer )
+    actualrate = Array(Cuint,1)
+    @bladerfcall( :bladerf_set_sample_rate, (Ptr{Void},Cint,Cuint,Ptr{Cuint}), device.handle, rfmodule.mod, rate, actualrate )
+    int(actualrate[1])
 end
 
 
